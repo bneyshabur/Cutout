@@ -16,24 +16,26 @@ from torch.optim.lr_scheduler import MultiStepLR
 from torchvision.utils import make_grid
 from torchvision import datasets, transforms
 
-from util.misc import CSVLogger
+from util.misc import get_sampler_classifier
 from util.cutout import Cutout
 
 from model.resnet import ResNet18
 from model.wide_resnet import WideResNet
 
 model_options = ['resnet18', 'wideresnet']
-dataset_options = ['cifar10', 'cifar100', 'svhn']
+dataset_options = ['cifar10', 'cifar100', 'svhn', 'mnist']
 
 parser = argparse.ArgumentParser(description='CNN')
 parser.add_argument('--dataset', '-d', default='cifar10',
                     choices=dataset_options)
+parser.add_argument('--prop', type=float, default=0.01,
+                                help='proportion of training data to use')
 parser.add_argument('--model', '-a', default='resnet18',
                     choices=model_options)
 parser.add_argument('--batch_size', type=int, default=128,
                     help='input batch size for training (default: 128)')
-parser.add_argument('--epochs', type=int, default=200,
-                    help='number of epochs to train (default: 20)')
+parser.add_argument('--epochs', type=int, default=500,
+                    help='number of epochs to train (default: 500)')
 parser.add_argument('--learning_rate', type=float, default=0.1,
                     help='learning rate')
 parser.add_argument('--data_augmentation', action='store_true', default=False,
@@ -62,7 +64,9 @@ test_id = args.dataset + '_' + args.model
 print(args)
 
 # Image Preprocessing
-if args.dataset == 'svhn':
+if args.dataset == 'mnist':
+    normalize = transforms.Normalize(mean=[0.131], std=[0.289])
+elif args.dataset == 'svhn':
     normalize = transforms.Normalize(mean=[x / 255.0 for x in[109.9, 109.7, 113.8]],
                                      std=[x / 255.0 for x in [50.1, 50.6, 50.8]])
 else:
@@ -71,6 +75,7 @@ else:
 
 train_transform = transforms.Compose([])
 if args.data_augmentation:
+    train_transform.transforms.append(transforms.Resize(32))
     train_transform.transforms.append(transforms.RandomCrop(32, padding=4))
     train_transform.transforms.append(transforms.RandomHorizontalFlip())
 train_transform.transforms.append(transforms.ToTensor())
@@ -80,11 +85,25 @@ if args.cutout:
 
 
 test_transform = transforms.Compose([
+    transforms.Resize(32),
     transforms.ToTensor(),
     normalize])
 
-if args.dataset == 'cifar10':
+if args.dataset == 'mnist':
     num_classes = 10
+    num_channels = 1
+    train_dataset = datasets.MNIST(root='data/',
+                                    train=True,
+                                    transform=train_transform,
+                                    download=True)
+
+    test_dataset = datasets.MNIST(root='data/',
+                                    train=False,
+                                    transform=test_transform,
+                                    download=True)
+elif args.dataset == 'cifar10':
+    num_classes = 10
+    num_channels = 3
     train_dataset = datasets.CIFAR10(root='data/',
                                      train=True,
                                      transform=train_transform,
@@ -96,6 +115,7 @@ if args.dataset == 'cifar10':
                                     download=True)
 elif args.dataset == 'cifar100':
     num_classes = 100
+    num_channels = 3
     train_dataset = datasets.CIFAR100(root='data/',
                                       train=True,
                                       transform=train_transform,
@@ -107,6 +127,7 @@ elif args.dataset == 'cifar100':
                                      download=True)
 elif args.dataset == 'svhn':
     num_classes = 10
+    num_channels = 3
     train_dataset = datasets.SVHN(root='data/',
                                   split='train',
                                   transform=train_transform,
@@ -135,6 +156,13 @@ train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                            pin_memory=True,
                                            num_workers=2)
 
+train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
+                                           batch_size=args.batch_size,
+                                           pin_memory=True,
+                                           num_workers=2,
+                                           sampler=get_sampler_classifier(train_loader, args.seed, args.prop))
+
+
 test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
                                           batch_size=args.batch_size,
                                           shuffle=False,
@@ -142,28 +170,16 @@ test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
                                           num_workers=2)
 
 if args.model == 'resnet18':
-    cnn = ResNet18(num_classes=num_classes)
+    cnn = ResNet18(num_classes=num_classes, num_channels=num_channels)
 elif args.model == 'wideresnet':
-    if args.dataset == 'svhn':
-        cnn = WideResNet(depth=16, num_classes=num_classes, widen_factor=8,
-                         dropRate=0.4)
-    else:
-        cnn = WideResNet(depth=28, num_classes=num_classes, widen_factor=10,
-                         dropRate=0.3)
+    cnn = WideResNet(depth=28, num_classes=num_classes, num_channels=num_channels, widen_factor=10, dropRate=0.5)
 
 cnn = cnn.cuda()
 criterion = nn.CrossEntropyLoss().cuda()
 cnn_optimizer = torch.optim.SGD(cnn.parameters(), lr=args.learning_rate,
                                 momentum=0.9, nesterov=True, weight_decay=5e-4)
 
-if args.dataset == 'svhn':
-    scheduler = MultiStepLR(cnn_optimizer, milestones=[80, 120], gamma=0.1)
-else:
-    scheduler = MultiStepLR(cnn_optimizer, milestones=[60, 120, 160], gamma=0.2)
-
-filename = 'logs/' + test_id + '.csv'
-csv_logger = CSVLogger(args=args, fieldnames=['epoch', 'train_acc', 'test_acc'], filename=filename)
-
+scheduler = MultiStepLR(cnn_optimizer, milestones=[round(0.4*args.epochs), round(0.8*args.epochs)], gamma=0.1)
 
 def test(loader):
     cnn.eval()    # Change model to 'eval' mode (BN uses moving mean/var).
@@ -216,14 +232,10 @@ for epoch in range(args.epochs):
         progress_bar.set_postfix(
             xentropy='%.3f' % (xentropy_loss_avg / (i + 1)),
             acc='%.3f' % accuracy)
-
-    test_acc = test(test_loader)
-    tqdm.write('test_acc: %.3f' % (test_acc))
-
+    if epoch % 10 == 0:
+        test_acc = test(test_loader)
+        tqdm.write('train_acc: %.3f test_acc: %.3f' % (accuracy, test_acc))
+    else:
+        tqdm.write('train_acc: %.3f' % (accuracy))
     scheduler.step(epoch)
 
-    row = {'epoch': str(epoch), 'train_acc': str(accuracy), 'test_acc': str(test_acc)}
-    csv_logger.writerow(row)
-
-torch.save(cnn.state_dict(), 'checkpoints/' + test_id + '.pt')
-csv_logger.close()

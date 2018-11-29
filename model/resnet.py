@@ -64,11 +64,11 @@ class Bottleneck(nn.Module):
 
 
 class ResNet(nn.Module):
-    def __init__(self, block, num_blocks, num_classes=10):
+    def __init__(self, block, num_blocks, num_classes=10, num_channels=3):
         super(ResNet, self).__init__()
         self.in_planes = 64
 
-        self.conv1 = conv3x3(3,64)
+        self.conv1 = conv3x3(num_channels,64)
         self.bn1 = nn.BatchNorm2d(64)
         self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
         self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
@@ -96,20 +96,20 @@ class ResNet(nn.Module):
         return out
 
 
-def ResNet18(num_classes=10):
-    return ResNet(BasicBlock, [2,2,2,2], num_classes)
+def ResNet18(num_classes=10, num_channels=3):
+    return ResNet(BasicBlock, [2,2,2,2], num_classes, num_channels)
 
-def ResNet34(num_classes=10):
-    return ResNet(BasicBlock, [3,4,6,3], num_classes)
+def ResNet34(num_classes=10, num_channels=3):
+    return ResNet(BasicBlock, [3,4,6,3], num_classes, num_channels)
 
-def ResNet50(num_classes=10):
-    return ResNet(Bottleneck, [3,4,6,3], num_classes)
+def ResNet50(num_classes=10, num_channels=3):
+    return ResNet(Bottleneck, [3,4,6,3], num_classes, num_channels)
 
-def ResNet101(num_classes=10):
-    return ResNet(Bottleneck, [3,4,23,3], num_classes)
+def ResNet101(num_classes=10, num_channels=3):
+    return ResNet(Bottleneck, [3,4,23,3], num_classes, num_channels)
 
-def ResNet152(num_classes=10):
-    return ResNet(Bottleneck, [3,8,36,3], num_classes)
+def ResNet152(num_classes=10, num_channels=3):
+    return ResNet(Bottleneck, [3,8,36,3], num_classes, num_channels)
 
 def test_resnet():
     net = ResNet50()
